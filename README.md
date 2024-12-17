@@ -39,3 +39,6 @@ For waku-cookies-fs-router, it is:
 post next http://localhost:3000/
 post read
 ```
+
+Actually... after editing the data load to happen inside the server component for 38_cookies, it has the same exact behavior. OK. So this isn't a difference between fs router and minimal client. It's a difference between waku/middleware/rsc + waku/middleware/ssr and the new waku/middleware/handler.
+

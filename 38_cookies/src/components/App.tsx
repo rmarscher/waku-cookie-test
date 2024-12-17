@@ -1,3 +1,6 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import fsPromises from 'node:fs/promises';
 import { Suspense, cache } from 'react';
 import { getContextData } from 'waku/middleware/context';
 import { getHonoContext } from 'waku/unstable_hono';
@@ -18,10 +21,21 @@ const InternalAsyncComponent = async () => {
   return null;
 };
 
-const App = ({ name, items }: { name: string; items: unknown[] }) => {
+const App = async ({ name }: { name: string; }) => {
   const data = getContextData() as { count?: number };
+  const items = JSON.parse(
+    await fsPromises.readFile(
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../private/items.json',
+      ),
+      'utf8',
+    ),
+  );
+  console.log("post read");
+  data.count = (data.count || 0) + 1;
   return (
-    <html lang="en">
+    <html>
       <head>
         <title>Waku</title>
       </head>
