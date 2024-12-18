@@ -1,0 +1,166 @@
+diff --git a/node_modules/waku/dist/lib/builder/build.js b/node_modules/waku/dist/lib/builder/build.js
+index 51b178ec616b73f34816ed31ea5b6089ce434a2f..b541f5e8a14cdaf0fccccf5f7a28d6e80cacf905 100644
+--- a/node_modules/waku/dist/lib/builder/build.js
++++ b/node_modules/waku/dist/lib/builder/build.js
+@@ -201,9 +201,6 @@ const buildServerBundle = async (rootDir, env, config, clientEntryFiles, serverE
+                     'react-server'
+                 ]
+             },
+-            external: [
+-                'waku/middleware/context'
+-            ],
+             noExternal: /^(?!node:)/
+         },
+         esbuild: {
+diff --git a/node_modules/waku/dist/lib/hono/ctx.js b/node_modules/waku/dist/lib/hono/ctx.js
+index 25d370b651dd8cb381b31c161c2cab6d680a0255..f46d146b132af9aea887bdccffb3dd430f5273c5 100644
+--- a/node_modules/waku/dist/lib/hono/ctx.js
++++ b/node_modules/waku/dist/lib/hono/ctx.js
+@@ -1,5 +1,4 @@
+-// This can't be relative import
+-import { getContextData } from 'waku/middleware/context';
++import { getContextData } from '../middleware/context.js';
+ // Internal context key
+ const HONO_CONTEXT = '__hono_context';
+ export const getHonoContext = ()=>{
+diff --git a/node_modules/waku/dist/lib/middleware/context.js b/node_modules/waku/dist/lib/middleware/context.js
+index 06e6003d8a67d9d69ea3bf9f77fa2a4ea99a40f2..51ed2209b3c30609b0756711eece802b890f3126 100644
+--- a/node_modules/waku/dist/lib/middleware/context.js
++++ b/node_modules/waku/dist/lib/middleware/context.js
+@@ -1,13 +1,20 @@
+-let contextStorage;
++const setContextStorage = (storage) => {
++  globalThis.__WAKU_MIDDLEWARE_CONTEXT_STORAGE__ ||= storage;
++};
++
++const getContextStorage = () => {
++  return globalThis.__WAKU_MIDDLEWARE_CONTEXT_STORAGE__;
++};
+ try {
+     const { AsyncLocalStorage } = await import('node:async_hooks');
+-    contextStorage = new AsyncLocalStorage();
++    setContextStorage(new AsyncLocalStorage());
+ } catch  {
+     console.warn('AsyncLocalStorage is not available');
+ }
+ let previousContext;
+ let currentContext;
+ const runWithContext = (context, fn)=>{
++    const contextStorage = getContextStorage();
+     if (contextStorage) {
+         return contextStorage.run(context, fn);
+     }
+@@ -29,6 +36,7 @@ export const context = ()=>{
+     };
+ };
+ export function getContext() {
++    const contextStorage = getContextStorage();
+     const context = contextStorage?.getStore() ?? currentContext;
+     if (!context) {
+         throw new Error('Context is not available. Make sure to use the context middleware. For now, Context is not available during the build time.');
+@@ -36,6 +44,7 @@ export function getContext() {
+     return context;
+ }
+ export function getContextData() {
++    const contextStorage = getContextStorage();
+     const context = contextStorage?.getStore() ?? currentContext;
+     if (!context) {
+         return {};
+diff --git a/node_modules/waku/dist/lib/middleware/dev-server-impl.js b/node_modules/waku/dist/lib/middleware/dev-server-impl.js
+index 00f8334b9236c3b2022d7c3f7c1d82224929fc00..9704ac8753acc993cda25dead1a97cb6dae61a12 100644
+--- a/node_modules/waku/dist/lib/middleware/dev-server-impl.js
++++ b/node_modules/waku/dist/lib/middleware/dev-server-impl.js
+@@ -249,9 +249,6 @@ const createRscViteServer = (env, configPromise)=>{
+                         'react-server'
+                     ]
+                 },
+-                external: [
+-                    'waku/middleware/context'
+-                ],
+                 noExternal: /^(?!node:)/,
+                 optimizeDeps: {
+                     include: [
+diff --git a/node_modules/waku/dist/lib/middleware/handler.js b/node_modules/waku/dist/lib/middleware/handler.js
+index 24a8ff288955dabfd3dccb982bb9596097ea144d..058424e2dbc24f835786657ca56d444c853562aa 100644
+--- a/node_modules/waku/dist/lib/middleware/handler.js
++++ b/node_modules/waku/dist/lib/middleware/handler.js
+@@ -4,6 +4,7 @@ import { renderRsc, decodeBody, decodePostAction } from '../renderers/rsc.js';
+ import { renderHtml } from '../renderers/html.js';
+ import { decodeRscPath, decodeFuncId } from '../renderers/utils.js';
+ import { filePathToFileURL, getPathMapping } from '../utils/path.js';
++import { waitForFirstByte } from '../utils/stream.js';
+ export const SERVER_MODULE_MAP = {
+     'rsdw-server': 'react-server-dom-webpack/server.edge'
+ };
+@@ -108,10 +109,10 @@ export const handler = (options)=>{
+         if (input) {
+             const res = await entries.default.handleRequest(input, utils);
+             if (res instanceof ReadableStream) {
+-                ctx.res.body = res;
++                ctx.res.body = await waitForFirstByte(res);
+             } else if (res) {
+                 if (res.body) {
+-                    ctx.res.body = res.body;
++                    ctx.res.body = await waitForFirstByte(res.body);
+                 }
+                 if (res.status) {
+                     ctx.res.status = res.status;
+diff --git a/node_modules/waku/dist/lib/utils/stream.js b/node_modules/waku/dist/lib/utils/stream.js
+index f12e181acc0fdef43be0024c752522fa94951319..f2f0af22e89bacde846561fa0cd91bbfa4848dac 100644
+--- a/node_modules/waku/dist/lib/utils/stream.js
++++ b/node_modules/waku/dist/lib/utils/stream.js
+@@ -77,5 +77,14 @@ export const streamFromPromise = (promise)=>new ReadableStream({
+             }
+         }
+     });
+-
++export const waitForFirstByte = (stream) => {
++      const [stream1, stream2] = stream.tee();
++      const reader = stream1.getReader();
++      return new Promise((resolve, reject) =>
++        reader.read().then(
++          () => resolve(stream2),
++          (error) => reject(error),
++        ),
++      );
++    };
+ //# sourceMappingURL=stream.js.map
+\ No newline at end of file
+diff --git a/node_modules/waku/dist/router/create-pages.js b/node_modules/waku/dist/router/create-pages.js
+index f4e7afb30f4f1a6c7cf6172692c9dcc95e22e210..3ad790a10ac7eb44490d64683a2bb24fe3979563 100644
+--- a/node_modules/waku/dist/router/create-pages.js
++++ b/node_modules/waku/dist/router/create-pages.js
+@@ -188,7 +188,7 @@ export const createPages = (fn)=>{
+             if (index === 0) {
+                 acc.push('/' + segment.name);
+             } else {
+-                acc.push(acc[index - 1] + '/' + segment.name);
++                acc.push(acc[index] + '/' + segment.name);
+             }
+             return acc;
+         }, [
+diff --git a/node_modules/waku/dist/router/define-router.js b/node_modules/waku/dist/router/define-router.js
+index f0d79d32b196890cc360d67911e5583da084a28b..59f160dcc99c5a51a559f00115897baad67a387c 100644
+--- a/node_modules/waku/dist/router/define-router.js
++++ b/node_modules/waku/dist/router/define-router.js
+@@ -4,8 +4,7 @@ import { unstable_defineEntries as defineEntries } from '../minimal/server.js';
+ import { encodeRoutePath, decodeRoutePath, ROUTE_ID, IS_STATIC_ID, HAS404_ID, SKIP_HEADER } from './common.js';
+ import { getPathMapping } from '../lib/utils/path.js';
+ import { ServerRouter } from './client.js';
+-// This can't be relative import
+-import { getContext } from 'waku/middleware/context';
++import { getContext } from '../middleware/context.js';
+ const isStringArray = (x)=>Array.isArray(x) && x.every((y)=>typeof y === 'string');
+ const parseRscParams = (rscParams)=>{
+     if (!(rscParams instanceof URLSearchParams)) {
+diff --git a/node_modules/waku/dist/server.js b/node_modules/waku/dist/server.js
+index 1f07452300dc3cb90d43c32284148ee8173277dd..7669c143c40189ef68020ce3c1fb811d38a399bd 100644
+--- a/node_modules/waku/dist/server.js
++++ b/node_modules/waku/dist/server.js
+@@ -1,5 +1,4 @@
+-// This can't be relative import
+-import { getContext } from 'waku/middleware/context';
++import { getContext } from './middleware/context.js';
+ /**
+  * This is an internal function and not for public use.
+  */ export function setAllEnvInternal(newEnv) {

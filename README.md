@@ -42,3 +42,4 @@ post read
 
 Actually... after editing the data load to happen inside the server component for 38_cookies, it has the same exact behavior. OK. So this isn't a difference between fs router and minimal client. It's a difference between waku/middleware/rsc + waku/middleware/ssr and the new waku/middleware/handler.
 
+UPDATE 2024-12-18: Applying https://github.com/dai-shi/waku/pull/1078 gets everything working. Patches have been added to the examples here. Navigate into each directory and run `patch -p1 < patches/waku@0.21.9.patch` to apply the patch and `patch -R -p1 < patches/waku@0.21.9.patch` to reverse it.
